@@ -34,7 +34,7 @@ def load_vgg(sess, vgg_path):
     vgg_layer4_out_tensor_name = 'layer4_out:0'
     vgg_layer7_out_tensor_name = 'layer7_out:0'
     #get the graph 
-    tf.save_model.loader.load(sess, [vgg_tag], vgg_path)
+    tf.saved_model.loader.load(sess, [vgg_tag], vgg_path)
     graph = tf.get_default_graph()
     image_input = graph.get_tensor_by_name(vgg_input_tensor_name)
     keep_prob = graph.get_tensor_by_name(vgg_keep_prob_tensor_name)
@@ -69,7 +69,8 @@ def layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes):
                                         padding='same',
                                         kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
     #needs to make sure the shape are the same
-    conv_1x1_layer4 = tf.layers.conv2d(vgg_layer4_out, 
+    pool4_out_scaled = tf.multiply(vgg_layer4_out, 0.01, name='pool4_out_scaled')
+    conv_1x1_layer4 = tf.layers.conv2d(pool4_out_scaled, 
                                        num_classes, 
                                        1, 
                                        padding='same', 
@@ -82,7 +83,8 @@ def layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes):
                                         padding='same',
                                         kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3)
                                        )
-    conv_1x1_layer3 = tf.layers.conv2d(vgg_layer3_out, 
+    pool3_out_scaled = tf.multiply(vgg_layer3_out, 0.0001, name='pool3_out_scaled')
+    conv_1x1_layer3 = tf.layers.conv2d(pool3_out_scaled, 
                                        num_classes, 
                                        1, 
                                        padding='same', 
@@ -109,8 +111,11 @@ def optimize(nn_last_layer, correct_label, learning_rate, num_classes):
     :return: Tuple of (logits, train_op, cross_entropy_loss)
     """
     logits = tf.reshape(nn_last_layer, (-1, num_classes))
+    correct_label = tf.reshape(correct_label, (-1,num_classes))
     #use cross entropy
-    cross_entropy_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits, correct_label))
+    reg_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+    cross_entropy_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits= logits, labels= correct_label))
+    cross_entropy_loss += sum(reg_losses)
     train_op = tf.train.AdamOptimizer(learning_rate).minimize(cross_entropy_loss)
     
     return logits, train_op, cross_entropy_loss
@@ -140,8 +145,8 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
             _, c = sess.run([train_op, cross_entropy_loss], 
                             feed_dict={input_image: image,
                                        correct_label: label,
-                                       keep_prob: keep_prob,
-                                       learning_rate: learning_rate})
+                                       keep_prob: 0.5,
+                                       learning_rate: 0.001})
             epoch_loss += c
         print('Epoch', epoch, 'completed out of',epochs,'loss:',epoch_loss)
 tests.test_train_nn(train_nn)
@@ -149,8 +154,8 @@ tests.test_train_nn(train_nn)
 
 def run():
     num_classes = 2
-    learning_rate = 0.001
-    keep_prob = 0.5
+    #learning_rate = 0.001
+    #keep_prob = 0.5
     image_shape = (160, 576)  # KITTI dataset uses 160x576 images
     data_dir = '/data'
     runs_dir = './runs'
@@ -178,9 +183,11 @@ def run():
         
         #placeholders
         correct_label = tf.placeholder(tf.int32, [None, None, None, num_classes], name='correct_label')
+        learning_rate = tf.placeholder(tf.float32, name='learning_rate')
+        #keep_prob = tf.placeholder(tf.float32, name='keep_prob')
         logits, train_op, cross_entropy_loss = optimize(output, correct_label, learning_rate, num_classes)
         # TODO: Train NN using the train_nn function
-        epochs = 5 # [5, 10, 25, 50]
+        epochs = 50 # [5, 10, 25, 50]
         batch_size = 10
         train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_loss, input_image,
                  correct_label, keep_prob, learning_rate)
